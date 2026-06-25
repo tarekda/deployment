@@ -8,6 +8,12 @@ This is the **single deployment folder** for the whole stack:
 - Redis + RabbitMQ (containers)
 - **MySQL on the VM host** (not containerized)
 
+### Environment
+
+1. Copy `env.example` → `.env` and set secrets + URLs.
+2. Backend loads **all** vars from `.env` via `env_file`; compose adds service wiring (Redis/RabbitMQ hostnames, cron defaults).
+3. Frontend **`VITE_API_URL`** is a **build arg** — set the public API URL before `docker compose up --build` (rebuild required after changes).
+
 ### Host MySQL setup (one-time, on the VM)
 
 1. Install MySQL 8.0 on the VM and ensure it is running.
@@ -63,7 +69,7 @@ nano .env
 docker compose --env-file .env up --build -d
 ```
 
-Set `DB_PASSWORD` and `SQL_PASSWORD` in `.env` to match the host MySQL `radius` user.
+Set in `.env` at minimum: `DB_PASSWORD`, `SQL_PASSWORD`, `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, and `VITE_API_URL` (public backend URL if users access the UI remotely).
 
 Stop:
 
@@ -75,6 +81,7 @@ Stop:
 
 - **One `.env` per client** (never commit it). Commit `env.example` only.
 - **Host MySQL**: dedicated `radius` user, strong password, firewall blocks port 3306 from the internet.
+- **Rebuild frontend** after changing `VITE_API_URL`.
 - **Backups**: store off-node (S3/Blob) and test restores.
 - **Pin versions**: deploy tagged images/releases; avoid `latest`.
 - **Observability**: enable logs/metrics stack if required (Grafana/Loki/Prometheus).

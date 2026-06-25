@@ -12,6 +12,12 @@ services:
     restart: unless-stopped
     ports:
       - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - radiuspro
 
@@ -31,7 +37,7 @@ services:
       SQL_PASSWORD: ${SQL_PASSWORD}
       DAILY_RESET_ENABLED: ${RADIUS_DAILY_RESET_ENABLED:-1}
       DAILY_RESET_AT: ${RADIUS_DAILY_RESET_AT:-00:00}
-      FREERADIUS_DEBUG: 0
+      FREERADIUS_DEBUG: ${FREERADIUS_DEBUG:-0}
     ports:
       - "1812:1812/udp"
       - "1813:1813/udp"
@@ -47,30 +53,56 @@ services:
       dockerfile: Dockerfile
     container_name: radiuspro-backend
     restart: unless-stopped
+    stop_grace_period: 30s
     depends_on:
-      - redis
-      - rabbitmq
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     environment:
+      # Service wiring + defaults (secrets stay in .env via env_file only)
       NODE_ENV: production
       PORT: 3000
-      JWT_SECRET: ${JWT_SECRET}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       DB_HOST: ${DB_HOST:-host.docker.internal}
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME:-radius}
       DB_USERNAME: ${DB_USERNAME:-radius}
-      DB_PASSWORD: ${DB_PASSWORD}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
-      BACKUP_DB_MODE: ${BACKUP_DB_MODE:-local}
-      BACKUP_MYSQLDUMP_PATH: ${BACKUP_MYSQLDUMP_PATH:-/usr/bin/mysqldump}
-      BACKUP_DB_TIMEOUT_SECONDS: ${BACKUP_DB_TIMEOUT_SECONDS:-3600}
+      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}
+      BACKUP_DIR: /app/backups
+      EXPIRY_DISCONNECT_CRON: ${EXPIRY_DISCONNECT_CRON:-*/5 * * * *}
+      EXPIRY_DISCONNECT_BATCH: ${EXPIRY_DISCONNECT_BATCH:-100}
+      EXPIRY_DISCONNECT_RUN_ON_STARTUP: ${EXPIRY_DISCONNECT_RUN_ON_STARTUP:-1}
+      CONNECTION_LOGS_SUMMARY_CRON: ${CONNECTION_LOGS_SUMMARY_CRON:-*/1 * * * *}
+      CONNECTION_LOGS_SUMMARY_REFRESH_HOURS: ${CONNECTION_LOGS_SUMMARY_REFRESH_HOURS:-2}
+      CONNECTION_LOGS_CLEANUP_CRON: ${CONNECTION_LOGS_CLEANUP_CRON:-20 3 * * *}
+      CONNECTION_LOGS_RETENTION_DAYS: ${CONNECTION_LOGS_RETENTION_DAYS:-7}
+      CONNECTION_LOGS_SUMMARY_RETENTION_DAYS: ${CONNECTION_LOGS_SUMMARY_RETENTION_DAYS:-180}
+      CONNECTION_LOGS_CLEANUP_BATCH_SIZE: ${CONNECTION_LOGS_CLEANUP_BATCH_SIZE:-10000}
+      CONNECTION_LOGS_CLEANUP_MAX_BATCHES: ${CONNECTION_LOGS_CLEANUP_MAX_BATCHES:-20}
     volumes:
       - radiuspro_uploads:/app/uploads
       - radiuspro_backups:/app/backups
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/api/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - radiuspro
 
@@ -79,17 +111,14 @@ services:
       context: ../xnet-frontend-radius-pro
       dockerfile: Dockerfile
       args:
-        NODE_ENV: production
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api}
     container_name: radiuspro-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "${FRONTEND_PORT:-5173}:8080"
-    environment:
-      NODE_ENV: production
-      API_URL: ${API_URL:-http://localhost:3000/api}
+      - "${FRONTEND_PORT:-5173}:80"
     networks:
       - radiuspro
 
