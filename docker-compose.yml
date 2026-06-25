@@ -1,0 +1,103 @@
+services:
+  redis:
+    image: redis:alpine
+    container_name: radiuspro-redis
+    restart: unless-stopped
+    networks:
+      - radiuspro
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: radiuspro-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    networks:
+      - radiuspro
+
+  freeradius:
+    build:
+      context: ../radius-docker-image
+    container_name: radiuspro-freeradius
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TZ: ${TZ}
+      SQL_SERVER: ${SQL_SERVER:-host.docker.internal}
+      SQL_PORT: ${SQL_PORT:-3306}
+      SQL_DATABASE: ${SQL_DATABASE:-radius}
+      SQL_USER: ${SQL_USER:-radius}
+      SQL_PASSWORD: ${SQL_PASSWORD}
+      DAILY_RESET_ENABLED: ${RADIUS_DAILY_RESET_ENABLED:-1}
+      DAILY_RESET_AT: ${RADIUS_DAILY_RESET_AT:-00:00}
+      FREERADIUS_DEBUG: 0
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+      - "1700:1700/udp"
+    volumes:
+      - radiuspro_freeradius_logs:/var/log/freeradius
+    networks:
+      - radiuspro
+
+  backend:
+    build:
+      context: ../xnet-backend-radius-pro
+      dockerfile: Dockerfile
+    container_name: radiuspro-backend
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - rabbitmq
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET}
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-radius}
+      DB_USERNAME: ${DB_USERNAME:-radius}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      BACKUP_DB_MODE: ${BACKUP_DB_MODE:-local}
+      BACKUP_MYSQLDUMP_PATH: ${BACKUP_MYSQLDUMP_PATH:-/usr/bin/mysqldump}
+      BACKUP_DB_TIMEOUT_SECONDS: ${BACKUP_DB_TIMEOUT_SECONDS:-3600}
+    volumes:
+      - radiuspro_uploads:/app/uploads
+      - radiuspro_backups:/app/backups
+    networks:
+      - radiuspro
+
+  frontend:
+    build:
+      context: ../xnet-frontend-radius-pro
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api}
+    container_name: radiuspro-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-5173}:8080"
+    environment:
+      NODE_ENV: production
+      API_URL: ${API_URL:-http://localhost:3000/api}
+    networks:
+      - radiuspro
+
+networks:
+  radiuspro:
+    driver: bridge
+
+volumes:
+  radiuspro_uploads:
+  radiuspro_backups:
+  radiuspro_freeradius_logs:
